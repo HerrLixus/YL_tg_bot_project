@@ -1,5 +1,6 @@
 import telebot
 from utils import read_config
+from searching_stuff import get_random_url
 from data.test import Scores
 from data import db_session
 
@@ -11,8 +12,11 @@ def start(message: telebot.types.Message):
     keyboard = telebot.types.InlineKeyboardMarkup()
     get_score_button = telebot.types.InlineKeyboardButton('Посмотреть счёт', callback_data='get_score')
     add_score_button = telebot.types.InlineKeyboardButton('Добавить счёт', callback_data='add_score')
+    send_picture_button = telebot.types.InlineKeyboardButton("Показать картинку", callback_data='send_picture')
     keyboard.add(get_score_button)
     keyboard.add(add_score_button)
+    keyboard.add(send_picture_button)
+
     bot.send_message(message.from_user.id, 'Выберите действие', reply_markup=keyboard)
 
 
@@ -23,6 +27,9 @@ def button_handler(call: telebot.types.CallbackQuery):
     elif call.data == 'add_score':
         bot.send_message(call.from_user.id, 'Введите счёт')
         bot.register_next_step_handler_by_chat_id(call.from_user.id, add_score)
+    elif call.data == 'send_picture':
+        bot.send_message(call.from_user.id, "Введите запрос")
+        bot.register_next_step_handler_by_chat_id(call.from_user.id, send_picture)
 
 
 def get_score(user_id):
@@ -53,6 +60,18 @@ def add_score(message: telebot.types.Message):
         print('Что-то пошло не так')
         print(type(exc).__name__)
     bot.send_message(message.from_user.id, 'Введите счёт')
+
+
+@bot.message_handler()
+def send_picture(message: telebot.types.Message):
+    try:
+        url = get_random_url(message.text)
+        bot.send_photo(message.from_user.id, photo=url)
+        bot.register_next_step_handler(message, send_picture)
+    except Exception as exc:
+        print('Что-то пошло не так')
+        print(type(exc).__name__)
+        send_picture(message)
 
 
 def initialize():
