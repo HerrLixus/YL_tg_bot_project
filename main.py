@@ -1,9 +1,13 @@
 import telebot
+import random
+
 from utils import read_config
 from searching_stuff import get_random_url
-from data.test import Scores
+from get_capitals import get_capitals
+from data.score import Scores
 from data import db_session
 
+capitals = None
 bot = telebot.TeleBot(read_config()['token'])
 
 
@@ -13,9 +17,11 @@ def start(message: telebot.types.Message):
     get_score_button = telebot.types.InlineKeyboardButton('Посмотреть счёт', callback_data='get_score')
     add_score_button = telebot.types.InlineKeyboardButton('Добавить счёт', callback_data='add_score')
     send_picture_button = telebot.types.InlineKeyboardButton("Показать картинку", callback_data='send_picture')
+    play_game_button = telebot.types.InlineKeyboardButton('Сыграть в игру', callback_data='play_game')
     keyboard.add(get_score_button)
     keyboard.add(add_score_button)
     keyboard.add(send_picture_button)
+    keyboard.add(play_game_button)
 
     bot.send_message(message.from_user.id, 'Выберите действие', reply_markup=keyboard)
 
@@ -30,6 +36,8 @@ def button_handler(call: telebot.types.CallbackQuery):
     elif call.data == 'send_picture':
         bot.send_message(call.from_user.id, "Введите запрос")
         bot.register_next_step_handler_by_chat_id(call.from_user.id, send_picture)
+    elif call.data == 'play_game':
+        play_game(call.from_user.id)
 
 
 def get_score(user_id):
@@ -74,8 +82,22 @@ def send_picture(message: telebot.types.Message):
         send_picture(message)
 
 
+def play_game(user_id):
+    try:
+        choice = random.choice(capitals)
+        url = get_random_url(choice[1])
+        bot.send_photo(user_id, photo=url)
+        bot.send_message(user_id, choice[0])
+    except Exception as exc:
+        print('Что-то пошло не так')
+        print(type(exc).__name__)
+        play_game(user_id)
+
+
 def initialize():
-    db_session.global_init('db/test.db')
+    global capitals
+    db_session.global_init('db/score.db')
+    capitals = get_capitals()
     bot.polling(non_stop=True, interval=0)
 
 
