@@ -1,4 +1,5 @@
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import random
 
 from utils import read_config
@@ -38,6 +39,25 @@ def button_handler(call: telebot.types.CallbackQuery):
         bot.register_next_step_handler_by_chat_id(call.from_user.id, send_picture)
     elif call.data == 'play_game':
         play_game(call.from_user.id)
+    elif call.data == 'correct':
+
+        keyboard = InlineKeyboardMarkup()
+        for row in call.message.reply_markup.keyboard:
+            for key in row:
+                new_key = InlineKeyboardButton(key.text, callback_data='something_else')
+                keyboard.add(new_key)
+        bot.edit_message_reply_markup(call.from_user.id, call.message.id, reply_markup=keyboard)
+
+        bot.send_message(call.from_user.id, "you're goddamn right")
+    elif call.data == 'wrong':
+        keyboard = InlineKeyboardMarkup()
+        for row in call.message.reply_markup.keyboard:
+            for key in row:
+                new_key = InlineKeyboardButton(key.text, callback_data='something_else')
+                keyboard.add(new_key)
+        bot.edit_message_reply_markup(call.from_user.id, call.message.id, reply_markup=keyboard)
+
+        bot.send_message(call.from_user.id, 'Wrong!')
 
 
 def get_score(user_id):
@@ -84,10 +104,16 @@ def send_picture(message: telebot.types.Message):
 
 def play_game(user_id):
     try:
-        choice = random.choice(capitals)
+        options = random.choices(capitals, k=3)
+        choice = random.choice(options)
         url = get_random_url(choice[1])
         bot.send_photo(user_id, photo=url)
-        bot.send_message(user_id, choice[0])
+
+        keyboard = InlineKeyboardMarkup()
+        keys = [InlineKeyboardButton(i[0], callback_data='correct' if i == choice else 'wrong') for i in options]
+        for key in keys:
+            keyboard.add(key)
+        bot.send_message(user_id, choice[0], reply_markup=keyboard)
     except Exception as exc:
         print('Что-то пошло не так')
         print(type(exc).__name__)
