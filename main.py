@@ -11,53 +11,74 @@ from data import db_session
 capitals = None
 bot = telebot.TeleBot(read_config()['token'])
 
+"""Core functions"""
+
 
 @bot.message_handler(commands=['start'])
 def start(message: telebot.types.Message):
+    send_menu(message.from_user.id)
+
+
+def send_menu(user_id):
     keyboard = telebot.types.InlineKeyboardMarkup()
     get_score_button = telebot.types.InlineKeyboardButton('Посмотреть счёт', callback_data='get_score')
-    add_score_button = telebot.types.InlineKeyboardButton('Добавить счёт', callback_data='add_score')
-    send_picture_button = telebot.types.InlineKeyboardButton("Показать картинку", callback_data='send_picture')
     play_game_button = telebot.types.InlineKeyboardButton('Сыграть в игру', callback_data='play_game')
+    send_picture_button = telebot.types.InlineKeyboardButton("Показать картинку", callback_data='send_picture')
+
     keyboard.add(get_score_button)
-    keyboard.add(add_score_button)
-    keyboard.add(send_picture_button)
     keyboard.add(play_game_button)
+    keyboard.add(send_picture_button)
 
-    bot.send_message(message.from_user.id, 'Выберите действие', reply_markup=keyboard)
+    bot.send_message(user_id, 'Выберите действие', reply_markup=keyboard)
+    bot.register_next_step_handler_by_chat_id(user_id, empty_handler)
 
 
-@bot.callback_query_handler(lambda call: True)
+@bot.message_handler()
+def empty_handler(message):
+    pass
+
+
+@bot.callback_query_handler(lambda call: True)  # looks terrible, still works
 def button_handler(call: telebot.types.CallbackQuery):
     if call.data == 'get_score':
         bot.send_message(call.from_user.id, str(get_score(call.from_user.id)))
-    elif call.data == 'add_score':
-        bot.send_message(call.from_user.id, 'Введите счёт')
-        bot.register_next_step_handler_by_chat_id(call.from_user.id, add_score)
-    elif call.data == 'send_picture':
-        bot.send_message(call.from_user.id, "Введите запрос")
-        bot.register_next_step_handler_by_chat_id(call.from_user.id, send_picture)
     elif call.data == 'play_game':
         play_game(call.from_user.id)
+    elif call.data == 'send_picture':
+        bot.send_message(call.from_user.id, 'Введите запрос')
+        bot.register_next_step_handler_by_chat_id(call.from_user.id, send_picture)
+    elif call.data == 'open_menu':
+        send_menu(call.from_user.id)
+
     elif call.data == 'correct':
-
-        keyboard = InlineKeyboardMarkup()
-        for row in call.message.reply_markup.keyboard:
-            for key in row:
-                new_key = InlineKeyboardButton(key.text, callback_data='something_else')
-                keyboard.add(new_key)
-        bot.edit_message_reply_markup(call.from_user.id, call.message.id, reply_markup=keyboard)
-
-        bot.send_message(call.from_user.id, "you're goddamn right")
+        shut_answer_keyboard_down(call)
+        bot.send_message(call.from_user.id, "Правильно!")
+        add_score(call.from_user.id, 1)
+        play_game(call.from_user.id)
     elif call.data == 'wrong':
-        keyboard = InlineKeyboardMarkup()
-        for row in call.message.reply_markup.keyboard:
-            for key in row:
-                new_key = InlineKeyboardButton(key.text, callback_data='something_else')
-                keyboard.add(new_key)
-        bot.edit_message_reply_markup(call.from_user.id, call.message.id, reply_markup=keyboard)
+        shut_answer_keyboard_down(call)
+        bot.send_message(call.from_user.id, 'Неправильно!')
+        play_game(call.from_user.id)
 
-        bot.send_message(call.from_user.id, 'Wrong!')
+
+@bot.message_handler(content_types=['text'])
+def send_picture(message: telebot.types.Message):
+    try:
+        url = get_random_url(message.text)
+        if url is None:
+            bot.send_message(message.from_user.id, 'произошла непредвиденная ошибка')
+            return
+        bot.send_photo(message.from_user.id, photo=url)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Показать меню", callback_data='open_menu')]])
+        bot.send_message(message.from_user.id, 'Введите запрос', reply_markup=keyboard)
+        bot.register_next_step_handler(message, send_picture)
+    except Exception as exc:
+        print('Что-то пошло не так')
+        print(type(exc).__name__)
+        send_picture(message)
+
+
+"""Scoring logic"""
 
 
 def get_score(user_id):
@@ -69,55 +90,60 @@ def get_score(user_id):
         return 0
 
 
-@bot.message_handler()
-def add_score(message: telebot.types.Message):
+def add_score(user_id, score: int):
     try:
-        score = int(message.text)
         session = db_session.create_session()
-        result = session.query(Scores).filter(Scores.user_id == message.from_user.id).first()
+        result = session.query(Scores).filter(Scores.user_id == user_id).first()
         if result is not None:
             result.score += score
         else:
             result = Scores()
-            result.user_id = message.from_user.id
+            result.user_id = user_id
             result.score = score
             session.add(result)
         session.commit()
-        bot.register_next_step_handler(message, add_score)
     except Exception as exc:
         print('Что-то пошло не так')
         print(type(exc).__name__)
-    bot.send_message(message.from_user.id, 'Введите счёт')
 
 
-@bot.message_handler()
-def send_picture(message: telebot.types.Message):
-    try:
-        url = get_random_url(message.text)
-        bot.send_photo(message.from_user.id, photo=url)
-        bot.register_next_step_handler(message, send_picture)
-    except Exception as exc:
-        print('Что-то пошло не так')
-        print(type(exc).__name__)
-        send_picture(message)
+"""Guessing game logic"""
 
 
 def play_game(user_id):
     try:
         options = random.choices(capitals, k=3)
         choice = random.choice(options)
-        url = get_random_url(choice[1])
+        url = get_random_url(choice[1] + ' город')
+        if url is None:
+            bot.send_message(user_id, 'произошла непредвиденная ошибка')
+            return
         bot.send_photo(user_id, photo=url)
 
         keyboard = InlineKeyboardMarkup()
         keys = [InlineKeyboardButton(i[0], callback_data='correct' if i == choice else 'wrong') for i in options]
         for key in keys:
             keyboard.add(key)
-        bot.send_message(user_id, choice[0], reply_markup=keyboard)
+        keyboard.add(InlineKeyboardButton('Прекратить играть', callback_data='open_menu'))
+        bot.send_message(user_id, "Чья это столица?", reply_markup=keyboard)
     except Exception as exc:
         print('Что-то пошло не так')
         print(type(exc).__name__)
         play_game(user_id)
+
+
+def shut_answer_keyboard_down(call):
+    keyboard = InlineKeyboardMarkup()
+    for row in call.message.reply_markup.keyboard:
+        for key in row:
+            new_key = InlineKeyboardButton(
+                key.text + (' ✔' if key.callback_data == 'correct' else ' ️❌'),
+                callback_data='something_else')
+            keyboard.add(new_key)
+    bot.edit_message_reply_markup(call.from_user.id, call.message.id, reply_markup=keyboard)
+
+
+"""Initialization"""
 
 
 def initialize():

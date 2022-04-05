@@ -12,5 +12,4 @@ def get_random_url(request):
         url = url.replace('%2F', '/')
         url = url.replace('%3A', ':')
         urls.append(url)
-
-    return random.choice(urls)
+    return random.choice(urls) if urls != [] else None
