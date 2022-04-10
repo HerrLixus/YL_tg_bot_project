@@ -29,13 +29,13 @@ def send_menu(user_id):
     keyboard.add(play_game_button)
     keyboard.add(send_picture_button)
 
-    bot.send_message(user_id, 'Выберите действие', reply_markup=keyboard)
     bot.register_next_step_handler_by_chat_id(user_id, empty_handler)
+    bot.send_message(user_id, 'Выберите действие', reply_markup=keyboard)
 
 
 @bot.message_handler()
 def empty_handler(message):
-    pass
+    bot.register_next_step_handler(message, empty_handler)
 
 
 @bot.callback_query_handler(lambda call: True)  # looks terrible, still works
