@@ -9,6 +9,7 @@ from data.score import Scores
 from data import db_session
 
 capitals = None
+user_context = dict()
 bot = telebot.TeleBot(read_config()['token'])
 
 """Core functions"""
@@ -29,13 +30,25 @@ def send_menu(user_id):
     keyboard.add(play_game_button)
     keyboard.add(send_picture_button)
 
-    bot.register_next_step_handler_by_chat_id(user_id, empty_handler)
+    set_next_handler(user_id, 'empty')
     bot.send_message(user_id, 'Выберите действие', reply_markup=keyboard)
 
 
-@bot.message_handler()
+def set_next_handler(user_id: int, name: str):
+    global user_context
+    if user_id in user_context.keys():
+        user_context[user_id]['next_handler'] = name
+    else:
+        user_context[user_id] = {'next_handler': name}
+
+
+def check_handler(user_id, name):
+    return user_context[user_id]['next_handler'] == name if user_id in user_context.keys() else True
+
+
+@bot.message_handler(func=lambda message: check_handler(message.from_user.id, 'empty'))
 def empty_handler(message):
-    bot.register_next_step_handler(message, empty_handler)
+    set_next_handler(message.from_user.id, 'empty')
 
 
 @bot.callback_query_handler(lambda call: True)  # looks terrible, still works
@@ -46,7 +59,7 @@ def button_handler(call: telebot.types.CallbackQuery):
         play_game(call.from_user.id)
     elif call.data == 'send_picture':
         bot.send_message(call.from_user.id, 'Введите запрос')
-        bot.register_next_step_handler_by_chat_id(call.from_user.id, send_picture)
+        set_next_handler(call.from_user.id, 'send_picture')
     elif call.data == 'open_menu':
         send_menu(call.from_user.id)
 
@@ -61,7 +74,7 @@ def button_handler(call: telebot.types.CallbackQuery):
         play_game(call.from_user.id)
 
 
-@bot.message_handler(content_types=['text'])
+@bot.message_handler(content_types=['text'], func=lambda message: check_handler(message.from_user.id, 'send_picture'))
 def send_picture(message: telebot.types.Message):
     try:
         url = get_random_url(message.text)
@@ -71,7 +84,7 @@ def send_picture(message: telebot.types.Message):
         bot.send_photo(message.from_user.id, photo=url)
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Показать меню", callback_data='open_menu')]])
         bot.send_message(message.from_user.id, 'Введите запрос', reply_markup=keyboard)
-        bot.register_next_step_handler(message, send_picture)
+        set_next_handler(message.from_user.id, 'send_picture')
     except Exception as exc:
         print('Что-то пошло не так')
         print(type(exc).__name__)
