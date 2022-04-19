@@ -1,3 +1,4 @@
+import sqlalchemy
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import random
@@ -17,21 +18,19 @@ bot = telebot.TeleBot(read_config()['token'])
 
 @bot.message_handler(commands=['start'])
 def start(message: telebot.types.Message):
-    send_menu(message.from_user.id)
+    send_menu(message)
 
 
-def send_menu(user_id):
+def send_menu(call):
     keyboard = telebot.types.InlineKeyboardMarkup()
-    get_score_button = telebot.types.InlineKeyboardButton('Посмотреть счёт', callback_data='get_score')
-    play_game_button = telebot.types.InlineKeyboardButton('Сыграть в игру', callback_data='play_game')
-    send_picture_button = telebot.types.InlineKeyboardButton("Показать картинку", callback_data='send_picture')
+    buttons = {'Посмотреть счёт': 'get_score',
+               'Сыграть в игру': 'play_game',
+               "Показать картинку": 'send_picture',
+               'Посмотреть таблицу лидеров': 'send_leaderboard'}
+    keyboard.keyboard = [[InlineKeyboardButton(item[0], callback_data=item[1])] for item in buttons.items()]
 
-    keyboard.add(get_score_button)
-    keyboard.add(play_game_button)
-    keyboard.add(send_picture_button)
-
-    set_next_handler(user_id, 'empty')
-    bot.send_message(user_id, 'Выберите действие', reply_markup=keyboard)
+    set_next_handler(call.from_user.id, 'empty')
+    bot.send_message(call.from_user.id, 'Выберите действие', reply_markup=keyboard)
 
 
 def set_next_handler(user_id: int, name: str):
@@ -51,37 +50,35 @@ def empty_handler(message):
     set_next_handler(message.from_user.id, 'empty')
 
 
-@bot.callback_query_handler(lambda call: True)  # looks terrible, still works
+@bot.callback_query_handler(lambda call: True)
 def button_handler(call: telebot.types.CallbackQuery):
-    if call.data == 'get_score':
-        bot.send_message(call.from_user.id, str(get_score(call.from_user.id)))
-    elif call.data == 'play_game':
-        play_game(call.from_user.id)
-    elif call.data == 'send_picture':
-        bot.send_message(call.from_user.id, 'Введите запрос')
-        set_next_handler(call.from_user.id, 'send_picture')
-    elif call.data == 'open_menu':
-        send_menu(call.from_user.id)
+    functions = {'get_score': send_score,
+                 'play_game': play_game,
+                 'send_picture': init_send_picture,
+                 'open_menu': send_menu,
+                 'send_leaderboard': send_leaderboard,
 
-    elif call.data == 'correct':
-        shut_answer_keyboard_down(call)
-        bot.send_message(call.from_user.id, "Правильно!")
-        add_score(call.from_user.id, 1)
-        play_game(call.from_user.id)
-    elif call.data == 'wrong':
-        shut_answer_keyboard_down(call)
-        bot.send_message(call.from_user.id, 'Неправильно!')
-        play_game(call.from_user.id)
+                 'correct': process_correct_answer,
+                 'wrong': process_wrong_answer}
+    functions[call.data](call)
+
+
+def init_send_picture(call):
+    bot.send_message(call.from_user.id, 'Введите запрос')
+    set_next_handler(call.from_user.id, 'send_picture')
 
 
 @bot.message_handler(content_types=['text'], func=lambda message: check_handler(message.from_user.id, 'send_picture'))
 def send_picture(message: telebot.types.Message):
     try:
+        # find and send picture
         url = get_random_url(message.text)
         if url is None:
             bot.send_message(message.from_user.id, 'произошла непредвиденная ошибка')
             return
         bot.send_photo(message.from_user.id, photo=url)
+
+        # send open menu button
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Показать меню", callback_data='open_menu')]])
         bot.send_message(message.from_user.id, 'Введите запрос', reply_markup=keyboard)
         set_next_handler(message.from_user.id, 'send_picture')
@@ -91,6 +88,27 @@ def send_picture(message: telebot.types.Message):
         send_picture(message)
 
 
+def get_user_name(user):
+    if user.username is not None:
+        return user.username
+    else:
+        return user.first_name + \
+               (f" {user.last_name}" if user.last_name is not None else '')
+
+
+def send_score(call):
+    username = get_user_name(call.from_user)
+    score = get_score(call.from_user.id)
+    text = f"{username}, Ваш счёт:\nПравильных: {score[0]}, Неправильных: {score[1]}"
+    bot.send_message(call.from_user.id, text)
+
+
+def send_leaderboard(call):
+    bot.send_message(call.from_user.id, f'Таблица лидеров:\n' +
+                     '\n\n'.join([f"{user[0]+1}.{user[1]}:\n"
+                                  f"Правильных: {user[2]}, Неправильных: {user[3]}" for user in get_leaderboard()]))
+
+
 """Scoring logic"""
 
 
@@ -98,21 +116,27 @@ def get_score(user_id):
     session = db_session.create_session()
     result = session.query(Scores).filter(Scores.user_id == user_id).first()
     if result is not None:
-        return result.score
+        return result.right, result.wrong
     else:
-        return 0
+        return 0, 0
 
 
-def add_score(user_id, score: int):
+def add_score(user_id, category):
     try:
         session = db_session.create_session()
         result = session.query(Scores).filter(Scores.user_id == user_id).first()
         if result is not None:
-            result.score += score
+            if category == 'right':
+                result.right += 1
+            elif category == 'wrong':
+                result.wrong += 1
         else:
             result = Scores()
             result.user_id = user_id
-            result.score = score
+            if category == 'right':
+                result.right = 1
+            elif category == 'wrong':
+                result.wrong = 1
             session.add(result)
         session.commit()
     except Exception as exc:
@@ -120,11 +144,21 @@ def add_score(user_id, score: int):
         print(type(exc).__name__)
 
 
+def get_leaderboard():
+    session = db_session.create_session()
+    result = session.query(Scores).order_by(sqlalchemy.desc(Scores.right), Scores.wrong).all()[:5]
+    return [(index, get_user_name(bot.get_chat(user.user_id)),
+             user.right, user.wrong)
+            for index, user in enumerate(result)]
+
+
 """Guessing game logic"""
 
 
-def play_game(user_id):
+def play_game(call):
+    user_id = call.from_user.id
     try:
+        # choose and send photo
         options = random.choices(capitals, k=3)
         choice = random.choice(options)
         url = get_random_url(choice[1] + ' город')
@@ -133,6 +167,7 @@ def play_game(user_id):
             return
         bot.send_photo(user_id, photo=url)
 
+        # send keyboard
         keyboard = InlineKeyboardMarkup()
         keys = [InlineKeyboardButton(i[0], callback_data='correct' if i == choice else 'wrong') for i in options]
         for key in keys:
@@ -142,7 +177,7 @@ def play_game(user_id):
     except Exception as exc:
         print('Что-то пошло не так')
         print(type(exc).__name__)
-        play_game(user_id)
+        play_game(call)
 
 
 def shut_answer_keyboard_down(call):
@@ -150,10 +185,24 @@ def shut_answer_keyboard_down(call):
     for row in call.message.reply_markup.keyboard:
         for key in row:
             new_key = InlineKeyboardButton(
-                key.text + (' ✔' if key.callback_data == 'correct' else ' ️❌'),
+                key.text + (' ✅' if key.callback_data == 'correct' else ' ️❌'),
                 callback_data='something_else')
             keyboard.add(new_key)
     bot.edit_message_reply_markup(call.from_user.id, call.message.id, reply_markup=keyboard)
+
+
+def process_correct_answer(call):
+    shut_answer_keyboard_down(call)
+    bot.send_message(call.from_user.id, "Правильно! ✅")
+    add_score(call.from_user.id, 'right')
+    play_game(call)
+
+
+def process_wrong_answer(call):
+    shut_answer_keyboard_down(call)
+    bot.send_message(call.from_user.id, 'Неправильно! ️❌')
+    add_score(call.from_user.id, 'wrong')
+    play_game(call)
 
 
 """Initialization"""
@@ -162,6 +211,7 @@ def shut_answer_keyboard_down(call):
 def initialize():
     global capitals
     db_session.global_init('db/score.db')
+    get_leaderboard()
     capitals = get_capitals()
     bot.polling(non_stop=True, interval=0)
 
