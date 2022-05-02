@@ -3,13 +3,13 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import random
 
-from utils import read_config
+from utils import read_config, get_user_name
 from searching_stuff import get_random_url
 from get_capitals import get_capitals
 from data.score import Scores
 from data import db_session
 
-capitals = None
+capitals = list()
 user_context = dict()
 bot = telebot.TeleBot(read_config()['token'])
 
@@ -24,25 +24,14 @@ def start(message: telebot.types.Message):
 def send_menu(call):
     keyboard = telebot.types.InlineKeyboardMarkup()
     buttons = {'Посмотреть счёт': 'get_score',
+               'Посмотреть таблицу лидеров': 'send_leaderboard',
                'Сыграть в игру': 'play_game',
-               "Показать картинку": 'send_picture',
-               'Посмотреть таблицу лидеров': 'send_leaderboard'}
+               "Показать картинку": 'send_picture'
+               }
     keyboard.keyboard = [[InlineKeyboardButton(item[0], callback_data=item[1])] for item in buttons.items()]
 
     set_next_handler(call.from_user.id, 'empty')
     bot.send_message(call.from_user.id, 'Выберите действие', reply_markup=keyboard)
-
-
-def set_next_handler(user_id: int, name: str):
-    global user_context
-    if user_id in user_context.keys():
-        user_context[user_id]['next_handler'] = name
-    else:
-        user_context[user_id] = {'next_handler': name}
-
-
-def check_handler(user_id, name):
-    return user_context[user_id]['next_handler'] == name if user_id in user_context.keys() else True
 
 
 @bot.message_handler(func=lambda message: check_handler(message.from_user.id, 'empty'))
@@ -61,6 +50,24 @@ def button_handler(call: telebot.types.CallbackQuery):
                  'correct': process_correct_answer,
                  'wrong': process_wrong_answer}
     functions[call.data](call)
+
+
+""" Working with user context """
+
+
+def set_next_handler(user_id: int, name: str):
+    global user_context
+    if user_id in user_context.keys():
+        user_context[user_id]['next_handler'] = name
+    else:
+        user_context[user_id] = {'next_handler': name}
+
+
+def check_handler(user_id, name):
+    return user_context[user_id]['next_handler'] == name if user_id in user_context.keys() else True
+
+
+"""Sending pictures"""
 
 
 def init_send_picture(call):
@@ -88,28 +95,7 @@ def send_picture(message: telebot.types.Message):
         send_picture(message)
 
 
-def get_user_name(user):
-    if user.username is not None:
-        return user.username
-    else:
-        return user.first_name + \
-               (f" {user.last_name}" if user.last_name is not None else '')
-
-
-def send_score(call):
-    username = get_user_name(call.from_user)
-    score = get_score(call.from_user.id)
-    text = f"{username}, Ваш счёт:\nПравильных: {score[0]}, Неправильных: {score[1]}"
-    bot.send_message(call.from_user.id, text)
-
-
-def send_leaderboard(call):
-    bot.send_message(call.from_user.id, f'Таблица лидеров:\n' +
-                     '\n\n'.join([f"{user[0]+1}.{user[1]}:\n"
-                                  f"Правильных: {user[2]}, Неправильных: {user[3]}" for user in get_leaderboard()]))
-
-
-"""Scoring logic"""
+"""Working with score"""
 
 
 def get_score(user_id):
@@ -144,12 +130,25 @@ def add_score(user_id, category):
         print(type(exc).__name__)
 
 
+def send_score(call):
+    username = get_user_name(call.from_user)
+    score = get_score(call.from_user.id)
+    text = f"{username}, Ваш счёт:\nПравильных: {score[0]}, Неправильных: {score[1]}"
+    bot.send_message(call.from_user.id, text)
+
+
 def get_leaderboard():
     session = db_session.create_session()
     result = session.query(Scores).order_by(sqlalchemy.desc(Scores.right), Scores.wrong).all()[:5]
     return [(index, get_user_name(bot.get_chat(user.user_id)),
              user.right, user.wrong)
             for index, user in enumerate(result)]
+
+
+def send_leaderboard(call):
+    bot.send_message(call.from_user.id, f'Таблица лидеров:\n' +
+                     '\n\n'.join([f"{user[0]+1}.{user[1]}:\n"
+                                  f"Правильных: {user[2]}, Неправильных: {user[3]}" for user in get_leaderboard()]))
 
 
 """Guessing game logic"""
@@ -164,6 +163,7 @@ def play_game(call):
         url = get_random_url(choice[1] + ' город')
         if url is None:
             bot.send_message(user_id, 'произошла непредвиденная ошибка')
+            send_menu(call)
             return
         bot.send_photo(user_id, photo=url)
 
@@ -211,7 +211,6 @@ def process_wrong_answer(call):
 def initialize():
     global capitals
     db_session.global_init('db/score.db')
-    get_leaderboard()
     capitals = get_capitals()
     bot.polling(non_stop=True, interval=0)
 

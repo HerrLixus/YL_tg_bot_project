@@ -22,4 +22,3 @@ def get_capitals():
             capitals.append(pack)
     capitals = capitals[:-1]
     return capitals
-
